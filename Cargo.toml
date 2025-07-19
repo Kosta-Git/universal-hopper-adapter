@@ -1,0 +1,90 @@
+# This file was automatically generated.
+
+[package]
+edition = "2021"
+name = "universal-hopper-adapter"
+version = "0.1.0"
+
+[dependencies]
+cortex-m = { version = "0.7.7", features = [
+  "inline-asm",
+  "critical-section-single-core",
+] }
+cortex-m-rt = "0.7.5"
+defmt = { version = "1.0.1", optional = true }
+defmt-rtt = { version = "1.0.0", optional = true }
+panic-halt = "1.0.0"
+panic-probe = { version = "1.0.0", features = ["print-defmt"], optional = true }
+usbd-hid = "0.8.2"
+
+# ccTalk
+cc_talk_core = { path = "../cctalk-rs/cc_talk_core", features = ["heapless"] }
+
+# Embassy dependencies
+embassy-stm32 = { version = "0.2.0", path = "../embassy/embassy-stm32", features = [
+  "defmt",
+  "unstable-pac",
+  "stm32l552ze",
+  "time-driver-any",
+  "exti",
+  "memory-x",
+  "low-power",
+  "dual-bank",
+] }
+embassy-sync = { version = "0.7.0", path = "../embassy/embassy-sync", features = [
+  "defmt",
+] }
+embassy-executor = { version = "0.7.0", path = "../embassy/embassy-executor", features = [
+  "arch-cortex-m",
+  "executor-thread",
+  "defmt",
+] }
+embassy-time = { version = "0.4.0", path = "../embassy/embassy-time", features = [
+  "defmt",
+  "defmt-timestamp-uptime",
+  "tick-hz-32_768",
+] }
+embassy-usb = { version = "0.5.0", path = "../embassy/embassy-usb", features = [
+  "defmt",
+] }
+embassy-net = { version = "0.7.0", path = "../embassy/embassy-net", features = [
+  "defmt",
+  "tcp",
+  "dhcpv4",
+  "medium-ethernet",
+] }
+embassy-futures = { version = "0.1.0", path = "../embassy/embassy-futures" }
+
+[[bin]]
+name = "universal-hopper-adapter"
+test = false
+bench = false
+
+[profile.dev]
+debug = true
+lto = true
+opt-level = "z"
+incremental = true
+
+[profile.release]
+debug = false
+lto = true
+opt-level = "z"
+incremental = true
+
+[features]
+defmt = ["dep:defmt"]
+defmt-rtt = ["dep:defmt-rtt"]
+panic-probe = ["dep:panic-probe"]
+default = ["debug"]
+debug = [
+  "defmt",
+  "defmt-rtt",
+  "panic-probe",
+  "embassy-executor/defmt",
+  "embassy-sync/defmt",
+  "embassy-futures/defmt",
+  "embassy-time/defmt",
+  "embassy-time/defmt-timestamp-uptime",
+  "embassy-stm32/defmt",
+]
