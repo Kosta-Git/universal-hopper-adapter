@@ -18,7 +18,8 @@ panic-probe = { version = "1.0.0", features = ["print-defmt"], optional = true }
 usbd-hid = "0.8.2"
 
 # ccTalk
-cc_talk_core = { path = "../cctalk-rs/cc_talk_core", features = ["heapless"] }
+cc_talk_core = { path = "../cctalk-rs/cc_talk_core" }
+heapless = { version = "0.8.0" }
 
 # Embassy dependencies
 embassy-stm32 = { version = "0.2.0", path = "../embassy/embassy-stm32", features = [
@@ -65,9 +66,11 @@ debug = true
 lto = true
 opt-level = "z"
 incremental = true
+test = true
 
 [profile.release]
-debug = false
+debug = true
+test = true
 lto = true
 opt-level = "z"
 incremental = true
