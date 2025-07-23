@@ -1,7 +1,5 @@
-use cc_talk_core::cc_talk::deserializer::deserialize;
-use cc_talk_core::cc_talk::serializer::serialize;
-use cc_talk_core::cc_talk::{self, deserializer, Packet, MAX_BLOCK_LENGTH};
-use cc_talk_core::{Category, ChecksumType, Device, Header};
+use cc_talk_core::cc_talk::MAX_BLOCK_LENGTH;
+use cc_talk_device::payout_device::PayoutDevice;
 use defmt::{panic, *};
 use embassy_futures::join::join;
 use embassy_stm32::peripherals::USB;
@@ -11,7 +9,7 @@ use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
 use embassy_usb::driver::EndpointError;
 use embassy_usb::Builder;
 
-use crate::{SignalPacket, PACKET_ARRIVED_SIGNAL};
+use crate::hopper::Hopper;
 
 pub fn configure_usb_clock(config: &mut Config) {
     use embassy_stm32::rcc::*;
@@ -32,7 +30,9 @@ pub fn configure_usb_clock(config: &mut Config) {
     config.rcc.mux.clk48sel = mux::Clk48sel::HSI48;
 }
 
-pub async fn create_and_run_usb_driver(driver: Driver<'_, USB>, device: &Device) {
+pub async fn create_and_run_usb_driver(driver: Driver<'_, USB>) {
+    info!("creating usb driver");
+
     // Create the driver, from the HAL.
     // Create embassy-usb Config
     let mut config = embassy_usb::Config::new(0xc057, 0xc057);
@@ -57,15 +57,16 @@ pub async fn create_and_run_usb_driver(driver: Driver<'_, USB>, device: &Device)
         &mut control_buf,
     );
 
-    let mut class = CdcAcmClass::new(&mut builder, &mut state, 64);
+    let mut class = CdcAcmClass::new(&mut builder, &mut state, MAX_BLOCK_LENGTH as u16);
     let mut usb = builder.build();
 
     let usb_future = usb.run();
     let cc_talk_listener_future = async {
         loop {
+            info!("waiting for usb connection");
             class.wait_connection().await;
             info!("usb connected");
-            let _ = cc_talk_event_listener(&mut class, device).await;
+            let _ = cc_talk_event_listener(&mut class).await;
             info!("usb disconnected");
         }
     };
@@ -86,96 +87,32 @@ impl From<EndpointError> for Disconnected {
 
 async fn cc_talk_event_listener<'d, T: Instance + 'd>(
     class: &mut CdcAcmClass<'d, Driver<'d, T>>,
-    device: &Device,
 ) -> Result<(), Disconnected> {
-    let mut buf = [0; MAX_BLOCK_LENGTH];
-    let mut nack_buffer = [0u8; 5];
-    let mut busy_buffer = [0u8; 5];
+    info!("initializing ccTalk buffers");
 
-    let mut nack_packet = Packet::new(&mut nack_buffer);
-    nack_packet.set_source(device.address()).unwrap();
-    nack_packet.set_data_length(0).unwrap();
-    nack_packet.set_header(Header::NACK).unwrap();
-
-    let mut busy_packet = Packet::new(&mut busy_buffer);
-    busy_packet.set_source(device.address()).unwrap();
-    busy_packet.set_data_length(0).unwrap();
-    busy_packet.set_header(Header::Busy).unwrap();
+    let device = PayoutDevice::new(Hopper);
+    let mut read_buffer = [0u8; MAX_BLOCK_LENGTH];
+    let mut reply_buffer = [0u8; MAX_BLOCK_LENGTH];
 
     info!("starting ccTalk event listener");
-    info!(
-        "ccTalk address: {}\nChecksum type: {}",
-        device.address(),
-        if device.checksum_type() == &ChecksumType::Crc8 {
-            "CRC8"
-        } else {
-            "CRC16"
-        }
-    );
 
     loop {
-        let n = class.read_packet(&mut buf).await?;
-        let mut p = Packet::new(&mut buf[..n]);
-
-        if p.get_destination().unwrap_or(0u8) != device.address() {
-            continue;
-        }
-
-        // If the signal was not cleared, we just respond busy and drop the packet.
-        if PACKET_ARRIVED_SIGNAL.signaled() {
-            if busy_packet
-                .set_destination(p.get_source().unwrap_or(1u8))
-                .is_err()
-            {
-                error!("unable to set busy destination");
-                continue;
-            }
-
-            match serialize(device, &mut busy_packet) {
-                Ok(()) => {
-                    let _ = class.write_packet(busy_packet.as_slice()).await;
-                }
-                Err(_) => {
-                    error!("unable to serialize busy packet");
+        let n = class.read_packet(&mut read_buffer).await?;
+        info!("received packet of length {}", n);
+        info!("data: {:?}", &read_buffer[..n]);
+        match device
+            .on_frame(&mut read_buffer[..n], reply_buffer.as_mut_slice())
+            .await
+        {
+            Ok(reply_len) => {
+                let result = class.write_packet(&reply_buffer[..reply_len]).await;
+                if result.is_err() {
+                    error!("Error writing reply packet");
+                } else {
+                    info!("Replied with {}", &reply_buffer[..reply_len]);
                 }
             }
-
-            continue;
-        }
-
-        match deserialize(&mut p, device.checksum_type().clone()) {
-            Ok(reply_addr) => {
-                info!("Received a valid packet with reply address: {}", reply_addr);
-                // TODO: Process the packet
-            }
-            Err(error) => {
-                match error {
-                    deserializer::DeserializationError::BufferTooSmall => warn!("buffer too small"),
-                    deserializer::DeserializationError::InvalidPacket => warn!("invalid packet"),
-                    deserializer::DeserializationError::UnsupportedChecksumType => {
-                        warn!("unsupported checksum type")
-                    }
-                    deserializer::DeserializationError::ChecksumMismatch(expected, actual) => {
-                        warn!("checksum mismatch {} != {}", expected, actual)
-                    }
-                };
-
-                // Reply NAK
-                if nack_packet
-                    .set_destination(p.get_source().unwrap_or(1u8))
-                    .is_err()
-                {
-                    error!("unable to set nack destination");
-                    continue;
-                }
-
-                match serialize(device, &mut nack_packet) {
-                    Ok(()) => {
-                        let _ = class.write_packet(nack_packet.as_slice()).await;
-                    }
-                    Err(_error) => error!("unable to serialize nack packet"),
-                };
-            }
-        }
+            Err(_) => error!("Error processing frame"),
+        };
     }
 }

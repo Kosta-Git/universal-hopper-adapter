@@ -18,7 +18,8 @@ panic-probe = { version = "1.0.0", features = ["print-defmt"], optional = true }
 usbd-hid = "0.8.2"
 
 # ccTalk
-cc_talk_core = { path = "../cctalk-rs/cc_talk_core" }
+cc_talk_core = { path = "../cctalk-rs/cc_talk_core", features = ["defmt"] }
+cc_talk_device = { path = "../cctalk-rs/cc_talk_device", features = ["defmt"] }
 heapless = { version = "0.8.0" }
 
 # Embassy dependencies
@@ -56,24 +57,37 @@ embassy-net = { version = "0.7.0", path = "../embassy/embassy-net", features = [
 ] }
 embassy-futures = { version = "0.1.0", path = "../embassy/embassy-futures" }
 
+[dev-dependencies]
+defmt-test = "0.4.0"
+
+[lib]
+harness = false
+
 [[bin]]
 name = "universal-hopper-adapter"
-test = false
 bench = false
+test = false
+doctest = false
 
 [profile.dev]
 debug = true
 lto = true
 opt-level = "z"
 incremental = true
-test = true
 
 [profile.release]
 debug = true
-test = true
 lto = true
 opt-level = "z"
 incremental = true
+
+[profile.test]
+codegen-units = 1
+debug = 2
+debug-assertions = true
+incremental = false
+opt-level = 3
+overflow-checks = true
 
 [features]
 defmt = ["dep:defmt"]
