@@ -16,6 +16,7 @@ defmt-rtt = { version = "1.0.0", optional = true }
 panic-halt = "1.0.0"
 panic-probe = { version = "1.0.0", features = ["print-defmt"], optional = true }
 usbd-hid = "0.8.2"
+embedded-io-async = { version = "0.6.1" }
 
 # ccTalk
 cc_talk_core = { path = "../cctalk-rs/cc_talk_core", features = ["defmt"] }

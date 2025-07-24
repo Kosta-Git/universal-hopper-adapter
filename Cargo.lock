@@ -975,6 +975,7 @@ dependencies = [
  "embassy-sync",
  "embassy-time",
  "embassy-usb",
+ "embedded-io-async",
  "heapless",
  "panic-halt",
  "panic-probe",
