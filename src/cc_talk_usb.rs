@@ -1,4 +1,5 @@
 use cc_talk_core::cc_talk::MAX_BLOCK_LENGTH;
+use cc_talk_device::device_impl::DeviceImpl;
 use cc_talk_device::payout_device::PayoutDevice;
 use defmt::{panic, *};
 use embassy_futures::join::join;
@@ -89,8 +90,9 @@ async fn cc_talk_event_listener<'d, T: Instance + 'd>(
     class: &mut CdcAcmClass<'d, Driver<'d, T>>,
 ) -> Result<(), Disconnected> {
     info!("initializing ccTalk buffers");
-
-    let device = PayoutDevice::new(Hopper);
+    let implementation = Hopper;
+    info!("ccTalk address: {}", implementation.address());
+    let device = PayoutDevice::new(implementation);
     let mut read_buffer = [0u8; MAX_BLOCK_LENGTH];
     let mut reply_buffer = [0u8; MAX_BLOCK_LENGTH];
 

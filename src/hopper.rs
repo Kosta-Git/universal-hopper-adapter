@@ -5,6 +5,7 @@ use cc_talk_core::{
     Category, ChecksumType, Device,
 };
 use cc_talk_device::device_impl::{DeviceImpl, SimplePayoutDevice};
+use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, mutex::Mutex};
 
 use crate::{
     payout::{
@@ -13,7 +14,14 @@ use crate::{
     reset::{send_reset_signal, ResetType},
 };
 
+static BUS_ADDRESS: Mutex<ThreadModeRawMutex, u8> = Mutex::new(3);
+
 pub struct Hopper;
+
+pub async fn set_bus_address(address: u8) {
+    let mut bus_address = BUS_ADDRESS.lock().await;
+    *bus_address = address;
+}
 
 impl DeviceImpl for Hopper {
     fn manufacturer(&self) -> Manufacturer {
@@ -61,7 +69,10 @@ impl DeviceImpl for Hopper {
     }
 
     fn address(&self) -> u8 {
-        3
+        match BUS_ADDRESS.try_lock() {
+            Ok(addr) => *addr,
+            Err(_) => 3,
+        }
     }
 
     fn device(&self) -> Device {

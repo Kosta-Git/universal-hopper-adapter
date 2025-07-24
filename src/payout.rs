@@ -79,12 +79,7 @@ pub async fn get_sensor_status() -> HopperStatus {
         let low_level = LOW_LEVEL_SENSOR.lock().await;
         low = *low_level;
     };
-    HopperStatus {
-        low_level_supported: true,
-        high_level_supported: true,
-        higher_than_low_level: low == Level::Low,
-        higher_than_high_level: high == Level::Low,
-    }
+    HopperStatus::new(true, low == Level::Low, true, high == Level::Low)
 }
 
 #[embassy_executor::task]
@@ -117,15 +112,15 @@ async fn payout_task(mut in_3: Output<'static>) {
                 info!("starting payout for {} coins", count);
                 match select(payment(&mut in_3), EMERGENCY_STOP_SIGNAL.wait()).await {
                     Either::First(_) => {
+                        // NOP
+                    }
+                    Either::Second(_) => {
                         warn!("emergency stop triggered during payout");
                         send_reset_signal(ResetType::Hopper);
                         {
                             let mut event = CURRENT_PAYOUT_STATUS.lock().await;
                             *event = event.coin_unpaid(event.coins_remaining);
                         }
-                    }
-                    Either::Second(_) => {
-                        // NOP
                     }
                 }
             }
@@ -178,14 +173,18 @@ async fn exit_sensor_task(mut exit_sensor: ExtiInput<'static>) {
         exit_sensor.wait_for_falling_edge().await;
         info!("exit sensor triggered");
 
-        let mut event = CURRENT_PAYOUT_STATUS.lock().await;
-        *event = event.coin_paid(1);
-        let mut dispense_count = DISPENSE_COUNT.lock().await;
-        *dispense_count = dispense_count.wrapping_add(1);
+        {
+            let mut event = CURRENT_PAYOUT_STATUS.lock().await;
+            *event = event.coin_paid(1);
+        }
+        {
+            let mut dispense_count = DISPENSE_COUNT.lock().await;
+            *dispense_count = dispense_count.wrapping_add(1);
+        }
 
         info!("signal exit sensor");
         EXIT_SENSOR_SIGNAL.signal(true);
-        Timer::after(Duration::from_millis(20)).await;
+        Timer::after(Duration::from_millis(15)).await;
     }
 }
 
@@ -238,6 +237,6 @@ async fn sensor_task(
                 }
             }
         }
-        Timer::after(Duration::from_millis(20)).await;
+        Timer::after(Duration::from_millis(50)).await;
     }
 }
