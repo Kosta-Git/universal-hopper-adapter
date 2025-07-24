@@ -97,7 +97,13 @@ async fn cc_talk_event_listener<'d, T: Instance + 'd>(
     info!("starting ccTalk event listener");
 
     loop {
-        let n = class.read_packet(&mut read_buffer).await?;
+        let n = match class.read_packet(&mut read_buffer).await {
+            Ok(size) => size,
+            Err(error) => {
+                error!("Error reading packet: {:?}", error);
+                continue;
+            }
+        };
         info!("received packet of length {}", n);
         info!("data: {:?}", &read_buffer[..n]);
         match device

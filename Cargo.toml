@@ -30,7 +30,6 @@ embassy-stm32 = { version = "0.2.0", path = "../embassy/embassy-stm32", features
   "time-driver-any",
   "exti",
   "memory-x",
-  "low-power",
   "dual-bank",
 ] }
 embassy-sync = { version = "0.7.0", path = "../embassy/embassy-sync", features = [

@@ -383,7 +383,6 @@ dependencies = [
  "defmt 1.0.1",
  "document-features",
  "embassy-embedded-hal",
- "embassy-executor",
  "embassy-futures",
  "embassy-hal-internal",
  "embassy-net-driver",
