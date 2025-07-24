@@ -6,6 +6,13 @@ use cc_talk_core::{
 };
 use cc_talk_device::device_impl::{DeviceImpl, SimplePayoutDevice};
 
+use crate::{
+    payout::{
+        enable_payout, get_dispense_count, get_payout_status, get_sensor_status, request_payout,
+    },
+    reset::{send_reset_signal, ResetType},
+};
+
 pub struct Hopper;
 
 impl DeviceImpl for Hopper {
@@ -46,7 +53,7 @@ impl DeviceImpl for Hopper {
     }
 
     async fn reset(&self) {
-        todo!()
+        send_reset_signal(ResetType::All);
     }
 
     fn is_for_me(&self, destination_address: u8) -> bool {
@@ -64,34 +71,34 @@ impl DeviceImpl for Hopper {
 
 impl SimplePayoutDevice for Hopper {
     async fn request_sensor_status(&self) -> HopperStatus {
-        todo!()
+        get_sensor_status().await
     }
 
     async fn emergency_stop(&self) {
-        todo!()
+        send_reset_signal(ResetType::Hopper);
     }
 
     fn request_hopper_coin(&self) -> &str {
-        todo!()
+        "" // The universal hopper mk2 can hold many type of coins.
     }
 
     async fn request_hopper_dispense_count(&self) -> u32 {
-        todo!()
+        get_dispense_count().await
     }
 
     async fn dispense_hopper_coins(&self, count: u8) {
-        todo!()
+        request_payout(count);
     }
 
     async fn request_payout_status(&self) -> HopperDispenseStatus {
-        todo!()
+        get_payout_status().await
     }
 
     async fn enable_payout(&self, enable: bool) {
-        todo!()
+        enable_payout(enable);
     }
 
     async fn test(&self) -> (u8, u8, u8) {
-        todo!()
+        (0, 0, 0)
     }
 }

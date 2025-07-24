@@ -13,6 +13,8 @@ fn panic() -> ! {
 
 pub mod cc_talk_usb;
 pub mod hopper;
+pub mod payout;
+pub mod reset;
 
 pub type SignalPacket =
     Signal<CriticalSectionRawMutex, Packet<heapless::Vec<u8, MAX_BLOCK_LENGTH>>>;

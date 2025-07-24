@@ -2,9 +2,13 @@
 #![no_main]
 
 use embassy_executor::Spawner;
+use embassy_stm32::exti::ExtiInput;
+use embassy_stm32::gpio::{Level, Output, Pull, Speed};
 use embassy_stm32::usb::Driver;
 use embassy_stm32::{bind_interrupts, peripherals, usb, Config};
 use universal_hopper_adapter::cc_talk_usb::{configure_usb_clock, create_and_run_usb_driver};
+use universal_hopper_adapter::payout::init_payout_tasks;
+use universal_hopper_adapter::reset::reset_task;
 use {defmt_rtt as _, panic_probe as _};
 
 bind_interrupts!(struct Irqs {
@@ -12,12 +16,30 @@ bind_interrupts!(struct Irqs {
 });
 
 #[embassy_executor::main]
-async fn main(_spawner: Spawner) {
+async fn main(spawner: Spawner) {
     let mut config = Config::default();
     configure_usb_clock(&mut config);
 
     let p = embassy_stm32::init(config);
     let driver = Driver::new(p.USB, Irqs, p.PA12, p.PA11);
+
+    let in_1_pin = Output::new(p.PB11, Level::High, Speed::High);
+    let in_2_pin = Output::new(p.PB10, Level::High, Speed::High);
+    let in_3_pin = Output::new(p.PE15, Level::Low, Speed::High);
+
+    let high_level_sensor = ExtiInput::new(p.PE14, p.EXTI14, Pull::Down);
+    let low_level_sensor = ExtiInput::new(p.PE12, p.EXTI12, Pull::Down);
+    let exit_sensor = ExtiInput::new(p.PE10, p.EXTI10, Pull::Down);
+
+    spawner.spawn(reset_task(in_1_pin, in_2_pin)).unwrap();
+    init_payout_tasks(
+        spawner,
+        in_3_pin,
+        exit_sensor,
+        low_level_sensor,
+        high_level_sensor,
+    )
+    .await;
 
     create_and_run_usb_driver(driver).await;
 }
