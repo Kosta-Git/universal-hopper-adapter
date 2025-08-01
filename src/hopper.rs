@@ -1,8 +1,6 @@
-use cc_talk_core::{
-    cc_talk::{
-        DataStorage, HopperDispenseStatus, HopperStatus, Manufacturer, MemoryType, SerialCode,
-    },
-    Category, ChecksumType, Device,
+use cc_talk_core::cc_talk::{
+    Category, ChecksumType, DataStorage, Device, HopperDispenseStatus, HopperStatus, Manufacturer,
+    MemoryType, SerialCode,
 };
 use cc_talk_device::device_impl::{DeviceImpl, SimplePayoutDevice};
 use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, mutex::Mutex};
@@ -110,6 +108,7 @@ impl SimplePayoutDevice for Hopper {
     }
 
     async fn test(&self) -> (u8, u8, u8) {
+        // TODO: implement self test
         (0, 0, 0)
     }
 }

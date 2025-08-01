@@ -15,7 +15,7 @@ static PAYOUT_SIGNAL: Signal<ThreadModeRawMutex, u8> = Signal::new();
 static ENABLE_PAYOUT_SIGNAL: Signal<ThreadModeRawMutex, bool> = Signal::new();
 static EMERGENCY_STOP_SIGNAL: Signal<ThreadModeRawMutex, ()> = Signal::new();
 
-static EXIT_SENSOR_SIGNAL: Signal<ThreadModeRawMutex, bool> = Signal::new();
+static EXIT_SENSOR_SIGNAL: Signal<ThreadModeRawMutex, u8> = Signal::new();
 
 static CURRENT_PAYOUT_STATUS: Mutex<ThreadModeRawMutex, HopperDispenseStatus> =
     Mutex::new(HopperDispenseStatus {
@@ -130,35 +130,27 @@ async fn payout_task(mut in_3: Output<'static>) {
 
 async fn payment(in_3: &mut Output<'static>) {
     let mut tries: u8 = 0;
-    let mut to_pay;
+    let mut to_pay = 1; // Just start with a value
     let mut success = false;
-
-    {
-        let event = CURRENT_PAYOUT_STATUS.lock().await;
-        to_pay = event.coins_remaining;
-    }
 
     while tries < MAXIMUM_TRY_COUNT && to_pay > 0 {
         in_3.set_high();
-        Timer::after(Duration::from_millis(10)).await;
-        in_3.set_low();
 
-        let wait_for_exit_with_timeout =
-            with_timeout(Duration::from_millis(500), EXIT_SENSOR_SIGNAL.wait());
-        match wait_for_exit_with_timeout.await {
-            Ok(_) => {
-                info!("exit sensor triggered, coin paid");
+        match with_timeout(Duration::from_millis(500), EXIT_SENSOR_SIGNAL.wait()).await {
+            Ok(remaining) => {
                 success = true;
-                let event = CURRENT_PAYOUT_STATUS.lock().await;
-                to_pay = event.coins_remaining;
+                to_pay = remaining; // Get the value from the signal
             }
             Err(_) => {
-                info!("exit sensor not triggered, retrying payment");
                 tries += 1;
                 success = false;
             }
         }
+
+        info!("left to pay {}", to_pay);
     }
+
+    in_3.set_low();
 
     if !success {
         let mut event = CURRENT_PAYOUT_STATUS.lock().await;
@@ -169,22 +161,30 @@ async fn payment(in_3: &mut Output<'static>) {
 #[embassy_executor::task]
 async fn exit_sensor_task(mut exit_sensor: ExtiInput<'static>) {
     loop {
-        info!("waiting for exit sensor trigger");
-        exit_sensor.wait_for_falling_edge().await;
-        info!("exit sensor triggered");
+        exit_sensor.wait_for_low().await;
+        Timer::after(Duration::from_millis(15)).await;
+        info!("coin out wait");
+        match with_timeout(Duration::from_millis(200), exit_sensor.wait_for_high()).await {
+            Ok(_) => {}
+            Err(_) => {
+                warn!("coin sensor timed out waiting for high level");
+                continue; // Timeout, just continue
+            }
+        }
+        info!("coin out");
+        Timer::after(Duration::from_millis(15)).await;
 
-        {
+        let remaining = {
             let mut event = CURRENT_PAYOUT_STATUS.lock().await;
             *event = event.coin_paid(1);
-        }
+            event.coins_remaining
+        };
         {
             let mut dispense_count = DISPENSE_COUNT.lock().await;
             *dispense_count = dispense_count.wrapping_add(1);
         }
-
         info!("signal exit sensor");
-        EXIT_SENSOR_SIGNAL.signal(true);
-        Timer::after(Duration::from_millis(15)).await;
+        EXIT_SENSOR_SIGNAL.signal(remaining);
     }
 }
 

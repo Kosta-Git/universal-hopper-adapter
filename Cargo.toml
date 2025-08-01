@@ -10,52 +10,43 @@ cortex-m = { version = "0.7.7", features = [
   "inline-asm",
   "critical-section-single-core",
 ] }
-cortex-m-rt = "0.7.5"
+cortex-m-rt = "0.7.0"
 defmt = { version = "1.0.1", optional = true }
 defmt-rtt = { version = "1.0.0", optional = true }
-panic-halt = "1.0.0"
 panic-probe = { version = "1.0.0", features = ["print-defmt"], optional = true }
-usbd-hid = "0.8.2"
 embedded-io-async = { version = "0.6.1" }
+embedded-hal = "1.0.0"
+portable-atomic = { version = "1.5", features = ["unsafe-assume-single-core"] }
 
 # ccTalk
-cc_talk_core = { path = "../cctalk-rs/cc_talk_core", features = ["defmt"] }
-cc_talk_device = { path = "../cctalk-rs/cc_talk_device", features = ["defmt"] }
+cc_talk_core = { version = "0.0.1", features = ["defmt"] }
+cc_talk_device = { version = "0.0.1", features = ["defmt"] }
 heapless = { version = "0.8.0" }
 
 # Embassy dependencies
-embassy-stm32 = { version = "0.2.0", path = "../embassy/embassy-stm32", features = [
+embassy-stm32 = { version = "0.2.0", features = [
   "defmt",
-  "unstable-pac",
-  "stm32l552ze",
   "time-driver-any",
-  "exti",
+  "stm32g071rb",
   "memory-x",
-  "dual-bank",
+  "unstable-pac",
+  "exti",
 ] }
-embassy-sync = { version = "0.7.0", path = "../embassy/embassy-sync", features = [
-  "defmt",
-] }
-embassy-executor = { version = "0.7.0", path = "../embassy/embassy-executor", features = [
+embassy-sync = { version = "0.7.0", features = ["defmt"] }
+embassy-executor = { version = "0.7.0", features = [
   "arch-cortex-m",
   "executor-thread",
   "defmt",
 ] }
-embassy-time = { version = "0.4.0", path = "../embassy/embassy-time", features = [
+embassy-time = { version = "0.4.0", features = [
   "defmt",
   "defmt-timestamp-uptime",
   "tick-hz-32_768",
 ] }
-embassy-usb = { version = "0.5.0", path = "../embassy/embassy-usb", features = [
+embassy-usb = { version = "0.5.0", default-features = false, features = [
   "defmt",
 ] }
-embassy-net = { version = "0.7.0", path = "../embassy/embassy-net", features = [
-  "defmt",
-  "tcp",
-  "dhcpv4",
-  "medium-ethernet",
-] }
-embassy-futures = { version = "0.1.0", path = "../embassy/embassy-futures" }
+embassy-futures = { version = "0.1.0" }
 
 [dev-dependencies]
 defmt-test = "0.4.0"

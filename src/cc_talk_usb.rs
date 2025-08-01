@@ -1,3 +1,4 @@
+/*
 use cc_talk_core::cc_talk::MAX_BLOCK_LENGTH;
 use cc_talk_device::device_impl::DeviceImpl;
 use cc_talk_device::payout_device::PayoutDevice;
@@ -123,4 +124,4 @@ async fn cc_talk_event_listener<'d, T: Instance + 'd>(
             Err(_) => error!("Error processing frame"),
         };
     }
-}
+}*/
