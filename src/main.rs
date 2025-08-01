@@ -27,7 +27,7 @@ async fn main(spawner: Spawner) {
     let p = embassy_stm32::init(config);
 
     // In pins
-    let in_1_pin = Output::new(p.PA0, Level::High, Speed::Low);
+    let in_1_pin = Output::new(p.PA0, Level::Low, Speed::Low);
     let in_2_pin = Output::new(p.PA1, Level::High, Speed::Low);
     let in_3_pin = Output::new(p.PA4, Level::Low, Speed::Low);
 
@@ -35,6 +35,9 @@ async fn main(spawner: Spawner) {
     let high_level_sensor = ExtiInput::new(p.PB1, p.EXTI1, Pull::Up);
     let low_level_sensor = ExtiInput::new(p.PB11, p.EXTI11, Pull::Up);
     let exit_sensor = ExtiInput::new(p.PB12, p.EXTI12, Pull::Up);
+
+    // Security output
+    let security_output = ExtiInput::new(p.PA2, p.EXTI2, Pull::Up);
 
     let user_button = ExtiInput::new(p.PC13, p.EXTI13, Pull::Down);
 

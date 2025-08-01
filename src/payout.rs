@@ -1,5 +1,5 @@
 use cc_talk_core::cc_talk::{HopperDispenseStatus, HopperStatus};
-use defmt::{info, warn};
+use defmt::{debug, info, trace, warn};
 use embassy_executor::Spawner;
 use embassy_futures::select::{select, Either};
 use embassy_stm32::{
@@ -110,11 +110,12 @@ async fn payout_task(mut in_3: Output<'static>) {
                 }
 
                 info!("starting payout for {} coins", count);
-                match select(payment(&mut in_3), EMERGENCY_STOP_SIGNAL.wait()).await {
+                match select(payment(count, &mut in_3), EMERGENCY_STOP_SIGNAL.wait()).await {
                     Either::First(_) => {
                         // NOP
                     }
                     Either::Second(_) => {
+                        in_3.set_low(); // Make sure to stop sending pulses.
                         warn!("emergency stop triggered during payout");
                         send_reset_signal(ResetType::Hopper);
                         {
@@ -128,51 +129,29 @@ async fn payout_task(mut in_3: Output<'static>) {
     }
 }
 
-async fn payment(in_3: &mut Output<'static>) {
-    let mut tries: u8 = 0;
-    let mut to_pay = 1; // Just start with a value
-    let mut success = false;
-
-    while tries < MAXIMUM_TRY_COUNT && to_pay > 0 {
+// Coin counting mode constants
+const CC_PULSE_LENGTH: Duration = Duration::from_millis(5);
+const CC_DELAY: Duration = Duration::from_millis(8);
+async fn request_hopper_dispense(count: u8, in_3: &mut Output<'static>) {
+    info!("requesting hopper dispense for {} coins", count);
+    for i in 0..count {
         in_3.set_high();
-
-        match with_timeout(Duration::from_millis(500), EXIT_SENSOR_SIGNAL.wait()).await {
-            Ok(remaining) => {
-                success = true;
-                to_pay = remaining; // Get the value from the signal
-            }
-            Err(_) => {
-                tries += 1;
-                success = false;
-            }
-        }
-
-        info!("left to pay {}", to_pay);
-    }
-
-    in_3.set_low();
-
-    if !success {
-        let mut event = CURRENT_PAYOUT_STATUS.lock().await;
-        *event = event.coin_unpaid(event.coins_remaining);
+        Timer::after(CC_PULSE_LENGTH).await;
+        in_3.set_low();
+        Timer::after(CC_DELAY).await;
+        debug!("pulse {} done.", i + 1);
     }
 }
 
+// Exit sensor constants
+const MIN_PULSE_LENGTH: Duration = Duration::from_millis(30);
 #[embassy_executor::task]
 async fn exit_sensor_task(mut exit_sensor: ExtiInput<'static>) {
     loop {
         exit_sensor.wait_for_low().await;
-        Timer::after(Duration::from_millis(15)).await;
-        info!("coin out wait");
-        match with_timeout(Duration::from_millis(200), exit_sensor.wait_for_high()).await {
-            Ok(_) => {}
-            Err(_) => {
-                warn!("coin sensor timed out waiting for high level");
-                continue; // Timeout, just continue
-            }
-        }
-        info!("coin out");
-        Timer::after(Duration::from_millis(15)).await;
+        Timer::after(MIN_PULSE_LENGTH).await;
+
+        exit_sensor.wait_for_high().await;
 
         let remaining = {
             let mut event = CURRENT_PAYOUT_STATUS.lock().await;
@@ -193,6 +172,7 @@ async fn sensor_task(
     mut low_level_sensor: ExtiInput<'static>,
     mut high_level_sensor: ExtiInput<'static>,
 ) {
+    // TODO: disable sensor task while motor is running.
     info!("sensor task started");
 
     let low_level_sensor_level = low_level_sensor.get_level();
