@@ -11,8 +11,6 @@ fn panic() -> ! {
     cortex_m::asm::udf();
 }
 
-pub mod cc_talk_uart;
-pub mod cc_talk_usb;
 pub mod hopper;
 pub mod payout;
 pub mod reset;

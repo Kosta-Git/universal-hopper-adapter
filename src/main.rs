@@ -57,6 +57,7 @@ async fn main(spawner: Spawner) {
         exit_sensor,
         low_level_sensor,
         high_level_sensor,
+        security_output,
     )
     .await;
 
@@ -115,9 +116,9 @@ async fn main(spawner: Spawner) {
             Err(_) => error!("Error processing frame"),
         }
     }
-    //   create_and_run_usb_driver(driver).await;
 }
 
+#[allow(dead_code)]
 fn compute_bus_address(addr_1: Level, addr_2: Level, addr_3: Level) -> u8 {
     let mut address = 3;
     if addr_1 == Level::High {

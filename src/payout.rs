@@ -7,7 +7,7 @@ use embassy_stm32::{
     gpio::{Level, Output},
 };
 use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, mutex::Mutex, signal::Signal};
-use embassy_time::{with_timeout, Duration, Timer};
+use embassy_time::{Duration, Timer};
 
 use crate::reset::{send_reset_signal, ResetType};
 
@@ -15,7 +15,12 @@ static PAYOUT_SIGNAL: Signal<ThreadModeRawMutex, u8> = Signal::new();
 static ENABLE_PAYOUT_SIGNAL: Signal<ThreadModeRawMutex, bool> = Signal::new();
 static EMERGENCY_STOP_SIGNAL: Signal<ThreadModeRawMutex, ()> = Signal::new();
 
-static EXIT_SENSOR_SIGNAL: Signal<ThreadModeRawMutex, u8> = Signal::new();
+#[derive(Clone, Copy, Debug, defmt::Format, Eq, PartialEq)]
+enum MotorState {
+    Running,
+    Idle,
+}
+static MOTOR_STATE_CHANGE_SIGNAL: Signal<ThreadModeRawMutex, MotorState> = Signal::new();
 
 static CURRENT_PAYOUT_STATUS: Mutex<ThreadModeRawMutex, HopperDispenseStatus> =
     Mutex::new(HopperDispenseStatus {
@@ -28,9 +33,8 @@ static CURRENT_PAYOUT_STATUS: Mutex<ThreadModeRawMutex, HopperDispenseStatus> =
 static HIGH_LEVEL_SENSOR: Mutex<ThreadModeRawMutex, Level> = Mutex::new(Level::Low);
 static LOW_LEVEL_SENSOR: Mutex<ThreadModeRawMutex, Level> = Mutex::new(Level::Low);
 
+/// Hopper dispense count since last reset or power on.
 static DISPENSE_COUNT: Mutex<ThreadModeRawMutex, u32> = Mutex::new(0);
-
-static MAXIMUM_TRY_COUNT: u8 = 5;
 
 pub async fn init_payout_tasks(
     spawner: Spawner,
@@ -38,6 +42,7 @@ pub async fn init_payout_tasks(
     exit_sensor: ExtiInput<'static>,
     low_level_sensor: ExtiInput<'static>,
     high_level_sensor: ExtiInput<'static>,
+    security_output: ExtiInput<'static>,
 ) {
     info!("initializing payout tasks");
 
@@ -46,6 +51,10 @@ pub async fn init_payout_tasks(
         .unwrap();
     spawner.spawn(exit_sensor_task(exit_sensor)).unwrap();
     spawner.spawn(payout_task(in_3)).unwrap();
+    spawner
+        .spawn(security_output_task(security_output))
+        .unwrap();
+    spawner.spawn(book_keeper_task()).unwrap();
 }
 
 pub async fn get_dispense_count() -> u32 {
@@ -110,10 +119,13 @@ async fn payout_task(mut in_3: Output<'static>) {
                 }
 
                 info!("starting payout for {} coins", count);
-                match select(payment(count, &mut in_3), EMERGENCY_STOP_SIGNAL.wait()).await {
-                    Either::First(_) => {
-                        // NOP
-                    }
+                match select(
+                    request_hopper_dispense(count, &mut in_3),
+                    EMERGENCY_STOP_SIGNAL.wait(),
+                )
+                .await
+                {
+                    Either::First(_) => {}
                     Either::Second(_) => {
                         in_3.set_low(); // Make sure to stop sending pulses.
                         warn!("emergency stop triggered during payout");
@@ -144,16 +156,20 @@ async fn request_hopper_dispense(count: u8, in_3: &mut Output<'static>) {
 }
 
 // Exit sensor constants
-const MIN_PULSE_LENGTH: Duration = Duration::from_millis(30);
+const MIN_PULSE_LENGTH: Duration = Duration::from_millis(50);
 #[embassy_executor::task]
 async fn exit_sensor_task(mut exit_sensor: ExtiInput<'static>) {
     loop {
-        exit_sensor.wait_for_low().await;
+        exit_sensor.wait_for_falling_edge().await;
         Timer::after(MIN_PULSE_LENGTH).await;
+        if exit_sensor.get_level() == Level::High {
+            trace!("exit sensor was not low for long enough, ignoring...");
+            continue;
+        }
+        exit_sensor.wait_for_rising_edge().await;
+        info!("exit sensor triggered");
 
-        exit_sensor.wait_for_high().await;
-
-        let remaining = {
+        {
             let mut event = CURRENT_PAYOUT_STATUS.lock().await;
             *event = event.coin_paid(1);
             event.coins_remaining
@@ -161,22 +177,74 @@ async fn exit_sensor_task(mut exit_sensor: ExtiInput<'static>) {
         {
             let mut dispense_count = DISPENSE_COUNT.lock().await;
             *dispense_count = dispense_count.wrapping_add(1);
+        };
+        Timer::after(MIN_PULSE_LENGTH * 2).await;
+    }
+}
+
+const BK_MAX_TRIES: u8 = 2;
+const BK_POLL_INTERVAL: Duration = Duration::from_secs(5);
+/// Makes sure the payout status is updated periodically, and resets it if no changes are detected
+/// for a certain number of tries. It will mark the coins as unpaid
+#[embassy_executor::task]
+async fn book_keeper_task() {
+    info!("book keeper task started");
+    let mut last_remaining = 0;
+    let mut tries = 0;
+    loop {
+        // This task can be used to log or process the payout status periodically
+        Timer::after(BK_POLL_INTERVAL).await;
+        let status = get_payout_status().await;
+        if status.coins_remaining != 0 && last_remaining == 0 {
+            last_remaining = status.coins_remaining;
+            tries = 0;
+            continue;
+        } else if last_remaining == 0 {
+            continue;
         }
-        info!("signal exit sensor");
-        EXIT_SENSOR_SIGNAL.signal(remaining);
+
+        if last_remaining != status.coins_remaining {
+            trace!(
+                "Bookkeeper: Coins remaining: {}, Paid: {}, Unpaid: {}",
+                status.coins_remaining,
+                status.paid,
+                status.unpaid
+            );
+            last_remaining = status.coins_remaining;
+        } else {
+            tries += 1;
+        }
+
+        if tries >= BK_MAX_TRIES {
+            warn!(
+                "Bookkeeper: No change in coins remaining for {} tries, resetting payout status",
+                BK_MAX_TRIES
+            );
+            let mut event = CURRENT_PAYOUT_STATUS.lock().await;
+            *event = event.coin_unpaid(event.coins_remaining);
+            last_remaining = 0;
+            tries = 0;
+        }
     }
 }
 
 #[embassy_executor::task]
-async fn sensor_task(
-    mut low_level_sensor: ExtiInput<'static>,
-    mut high_level_sensor: ExtiInput<'static>,
-) {
-    // TODO: disable sensor task while motor is running.
+async fn security_output_task(mut security_output: ExtiInput<'static>) {
+    info!("security output task started");
+    loop {
+        security_output.wait_for_falling_edge().await;
+    }
+}
+
+// Constants for sensor polling
+const SENSOR_POLLING_INTERVAL: Duration = Duration::from_secs(5);
+#[embassy_executor::task]
+async fn sensor_task(low_level_sensor: ExtiInput<'static>, high_level_sensor: ExtiInput<'static>) {
     info!("sensor task started");
 
     let low_level_sensor_level = low_level_sensor.get_level();
     let high_level_sensor_level = high_level_sensor.get_level();
+    let mut motor_state = MotorState::Idle;
 
     info!(
         "polling initial sensor levels, low sensor {}, high sensor {}",
@@ -192,31 +260,29 @@ async fn sensor_task(
     }
 
     info!("initial sensor levels set, starting event loop");
-
     loop {
-        match select(
-            low_level_sensor.wait_for_any_edge(),
-            high_level_sensor.wait_for_any_edge(),
-        )
-        .await
-        {
-            Either::First(_) => {
-                info!("low level sensor triggered");
-                let level = low_level_sensor.get_level();
-                {
-                    let mut lll = LOW_LEVEL_SENSOR.lock().await;
-                    *lll = level;
-                }
-            }
-            Either::Second(_) => {
-                info!("high level sensor triggered");
-                let level = high_level_sensor.get_level();
-                {
-                    let mut hll = HIGH_LEVEL_SENSOR.lock().await;
-                    *hll = level;
-                }
-            }
+        Timer::after(SENSOR_POLLING_INTERVAL).await;
+
+        if MOTOR_STATE_CHANGE_SIGNAL.signaled() {
+            motor_state = MOTOR_STATE_CHANGE_SIGNAL.wait().await;
         }
-        Timer::after(Duration::from_millis(50)).await;
+
+        if motor_state == MotorState::Running {
+            trace!("motor is running, skipping sensor check");
+            continue;
+        }
+
+        let level = low_level_sensor.get_level();
+        {
+            debug!("low level sensor: {}", level);
+            let mut lll = LOW_LEVEL_SENSOR.lock().await;
+            *lll = level;
+        }
+        let level = high_level_sensor.get_level();
+        {
+            debug!("high level sensor: {}", level);
+            let mut hll = HIGH_LEVEL_SENSOR.lock().await;
+            *hll = level;
+        }
     }
 }
