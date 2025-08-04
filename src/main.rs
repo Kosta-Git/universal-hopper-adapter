@@ -27,7 +27,7 @@ async fn main(spawner: Spawner) {
     let p = embassy_stm32::init(config);
 
     // In pins
-    let in_1_pin = Output::new(p.PA0, Level::Low, Speed::Low);
+    let in_1_pin = Output::new(p.PA0, Level::High, Speed::Low);
     let in_2_pin = Output::new(p.PA1, Level::High, Speed::Low);
     let in_3_pin = Output::new(p.PA4, Level::Low, Speed::Low);
 

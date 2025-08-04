@@ -9,18 +9,17 @@ use embassy_stm32::{
 use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, mutex::Mutex, signal::Signal};
 use embassy_time::{Duration, Timer};
 
-use crate::reset::{send_reset_signal, ResetType};
-
 static PAYOUT_SIGNAL: Signal<ThreadModeRawMutex, u8> = Signal::new();
 static ENABLE_PAYOUT_SIGNAL: Signal<ThreadModeRawMutex, bool> = Signal::new();
 static EMERGENCY_STOP_SIGNAL: Signal<ThreadModeRawMutex, ()> = Signal::new();
 
 #[derive(Clone, Copy, Debug, defmt::Format, Eq, PartialEq)]
-enum MotorState {
-    Running,
-    Idle,
+enum MotorCommand {
+    Start,
+    Stop,
 }
-static MOTOR_STATE_CHANGE_SIGNAL: Signal<ThreadModeRawMutex, MotorState> = Signal::new();
+static CHANGE_MOTOR_STATE_SIGNAL: Signal<ThreadModeRawMutex, MotorCommand> = Signal::new();
+static SENSOR_STATE_SIGNAL: Signal<ThreadModeRawMutex, bool> = Signal::new();
 
 static CURRENT_PAYOUT_STATUS: Mutex<ThreadModeRawMutex, HopperDispenseStatus> =
     Mutex::new(HopperDispenseStatus {
@@ -50,11 +49,12 @@ pub async fn init_payout_tasks(
         .spawn(sensor_task(low_level_sensor, high_level_sensor))
         .unwrap();
     spawner.spawn(exit_sensor_task(exit_sensor)).unwrap();
-    spawner.spawn(payout_task(in_3)).unwrap();
+    spawner.spawn(payout_task()).unwrap();
     spawner
         .spawn(security_output_task(security_output))
         .unwrap();
     spawner.spawn(book_keeper_task()).unwrap();
+    spawner.spawn(motor_control_task(in_3)).unwrap();
 }
 
 pub async fn get_dispense_count() -> u32 {
@@ -92,7 +92,7 @@ pub async fn get_sensor_status() -> HopperStatus {
 }
 
 #[embassy_executor::task]
-async fn payout_task(mut in_3: Output<'static>) {
+async fn payout_task() {
     info!("payout task started");
     let mut payout_enabled = false;
 
@@ -118,40 +118,39 @@ async fn payout_task(mut in_3: Output<'static>) {
                     *event = event.payout_requested(count);
                 }
 
-                info!("starting payout for {} coins", count);
-                match select(
-                    request_hopper_dispense(count, &mut in_3),
-                    EMERGENCY_STOP_SIGNAL.wait(),
-                )
-                .await
-                {
-                    Either::First(_) => {}
-                    Either::Second(_) => {
-                        in_3.set_low(); // Make sure to stop sending pulses.
-                        warn!("emergency stop triggered during payout");
-                        send_reset_signal(ResetType::Hopper);
-                        {
-                            let mut event = CURRENT_PAYOUT_STATUS.lock().await;
-                            *event = event.coin_unpaid(event.coins_remaining);
-                        }
-                    }
-                }
+                CHANGE_MOTOR_STATE_SIGNAL.signal(MotorCommand::Start);
             }
         }
     }
 }
 
-// Coin counting mode constants
-const CC_PULSE_LENGTH: Duration = Duration::from_millis(5);
-const CC_DELAY: Duration = Duration::from_millis(8);
-async fn request_hopper_dispense(count: u8, in_3: &mut Output<'static>) {
-    info!("requesting hopper dispense for {} coins", count);
-    for i in 0..count {
-        in_3.set_high();
-        Timer::after(CC_PULSE_LENGTH).await;
-        in_3.set_low();
-        Timer::after(CC_DELAY).await;
-        debug!("pulse {} done.", i + 1);
+#[embassy_executor::task]
+async fn motor_control_task(mut in_3: Output<'static>) {
+    loop {
+        match select(
+            CHANGE_MOTOR_STATE_SIGNAL.wait(),
+            EMERGENCY_STOP_SIGNAL.wait(),
+        )
+        .await
+        {
+            Either::First(command) => match command {
+                MotorCommand::Start => {
+                    info!("motor command: start");
+                    in_3.set_high();
+                    SENSOR_STATE_SIGNAL.signal(false);
+                }
+                MotorCommand::Stop => {
+                    info!("motor command: stop");
+                    in_3.set_low();
+                    SENSOR_STATE_SIGNAL.signal(true);
+                }
+            },
+            Either::Second(_) => {
+                warn!("emergency stop triggered, stopping motor");
+                in_3.set_low();
+                SENSOR_STATE_SIGNAL.signal(true);
+            }
+        };
     }
 }
 
@@ -172,13 +171,17 @@ async fn exit_sensor_task(mut exit_sensor: ExtiInput<'static>) {
         {
             let mut event = CURRENT_PAYOUT_STATUS.lock().await;
             *event = event.coin_paid(1);
-            event.coins_remaining
+            debug!("coins remaining: {}", event.coins_remaining);
+
+            if event.coins_remaining == 0 {
+                info!("all coins paid, stopping motor");
+                CHANGE_MOTOR_STATE_SIGNAL.signal(MotorCommand::Stop);
+            }
         };
         {
             let mut dispense_count = DISPENSE_COUNT.lock().await;
             *dispense_count = dispense_count.wrapping_add(1);
         };
-        Timer::after(MIN_PULSE_LENGTH * 2).await;
     }
 }
 
@@ -188,7 +191,7 @@ const BK_POLL_INTERVAL: Duration = Duration::from_secs(5);
 /// for a certain number of tries. It will mark the coins as unpaid
 #[embassy_executor::task]
 async fn book_keeper_task() {
-    info!("book keeper task started");
+    info!("bookkeeper task started");
     let mut last_remaining = 0;
     let mut tries = 0;
     loop {
@@ -224,6 +227,9 @@ async fn book_keeper_task() {
             *event = event.coin_unpaid(event.coins_remaining);
             last_remaining = 0;
             tries = 0;
+
+            warn!("Bookkeeper: Stopping motor state due to no change in payout status");
+            CHANGE_MOTOR_STATE_SIGNAL.signal(MotorCommand::Stop);
         }
     }
 }
@@ -244,7 +250,7 @@ async fn sensor_task(low_level_sensor: ExtiInput<'static>, high_level_sensor: Ex
 
     let low_level_sensor_level = low_level_sensor.get_level();
     let high_level_sensor_level = high_level_sensor.get_level();
-    let mut motor_state = MotorState::Idle;
+    let mut enabled = true;
 
     info!(
         "polling initial sensor levels, low sensor {}, high sensor {}",
@@ -263,12 +269,12 @@ async fn sensor_task(low_level_sensor: ExtiInput<'static>, high_level_sensor: Ex
     loop {
         Timer::after(SENSOR_POLLING_INTERVAL).await;
 
-        if MOTOR_STATE_CHANGE_SIGNAL.signaled() {
-            motor_state = MOTOR_STATE_CHANGE_SIGNAL.wait().await;
+        if SENSOR_STATE_SIGNAL.signaled() {
+            enabled = SENSOR_STATE_SIGNAL.wait().await;
         }
 
-        if motor_state == MotorState::Running {
-            trace!("motor is running, skipping sensor check");
+        if !enabled {
+            trace!("sensor are disabled, skipping sensor polling");
             continue;
         }
 
