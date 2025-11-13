@@ -65,8 +65,6 @@ async fn main(spawner: Spawner) {
         conf.data_bits = DataBits::DataBits8;
         conf.stop_bits = StopBits::STOP1;
         conf.parity = Parity::ParityNone;
-        conf.detect_previous_overrun = true;
-        conf.assume_noise_free = true;
         conf
     };
     let mut uart = Uart::new_half_duplex(
@@ -80,6 +78,7 @@ async fn main(spawner: Spawner) {
         usart::HalfDuplexConfig::OpenDrainExternal,
     )
     .unwrap();
+
     info!("initializing ccTalk buffers");
     let implementation = Hopper;
     info!("ccTalk address: {}", implementation.address());
@@ -118,14 +117,19 @@ async fn main(spawner: Spawner) {
 
 #[allow(dead_code)]
 fn compute_bus_address(addr_1: Level, addr_2: Level, addr_3: Level) -> u8 {
+    info!(
+        "Bus address dip switches: {}, {}, {}",
+        addr_1, addr_2, addr_3
+    );
+
     let mut address = 3;
-    if addr_1 == Level::High {
+    if addr_1 == Level::Low {
         address += 1;
     }
-    if addr_2 == Level::High {
+    if addr_2 == Level::Low {
         address += 2;
     }
-    if addr_3 == Level::High {
+    if addr_3 == Level::Low {
         address += 4;
     }
     address
