@@ -75,7 +75,6 @@ async fn main(spawner: Spawner) {
         p.DMA1_CH2,
         uart_config,
         usart::HalfDuplexReadback::NoReadback,
-        usart::HalfDuplexConfig::OpenDrainExternal,
     )
     .unwrap();
 
@@ -97,7 +96,7 @@ async fn main(spawner: Spawner) {
                     .await
                 {
                     Ok(reply_len) => {
-                        let result = uart.write_all(&reply_buffer[..reply_len]).await;
+                        let result = uart.write(&reply_buffer[..reply_len]).await;
                         if result.is_err() {
                             error!("Error writing reply: {:?}", result);
                         } else {
