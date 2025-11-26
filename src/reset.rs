@@ -20,7 +20,7 @@ pub fn send_reset_signal(reset_type: ResetType) {
 /// Background task that listens for reset signals and performs the appropriate reset action.
 /// This task will reset the hopper, controller, or both based on the received signal.
 ///
-/// The hopper reset is done by driving the in_1 and in_2 outputs to low and high respectively.
+/// The hopper reset is done by driving the `in_1` and `in_2` outputs to low and high respectively.
 ///
 /// The system reset is performed by calling the system control block's reset function.
 #[embassy_executor::task]

@@ -6,6 +6,7 @@ use cc_talk_device::device_impl::{DeviceImpl, SimplePayoutDevice};
 use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, mutex::Mutex};
 
 use crate::{
+    build_info,
     payout::{
         enable_payout, get_dispense_count, get_payout_status, get_sensor_status, request_payout,
     },
@@ -13,6 +14,38 @@ use crate::{
 };
 
 static BUS_ADDRESS: Mutex<ThreadModeRawMutex, u8> = Mutex::new(3);
+
+const fn parse_serial_code() -> (u8, u8, u8) {
+    const SERIAL_STR: &str = match option_env!("HOPPER_SERIAL_CODE") {
+        Some(s) => s,
+        None => "0,215,0",
+    };
+
+    let bytes = SERIAL_STR.as_bytes();
+    let mut a: u8 = 0;
+    let mut b: u8 = 0;
+    let mut c: u8 = 0;
+    let mut i = 0;
+    let mut field = 0;
+
+    while i < bytes.len() {
+        if bytes[i] >= b'0' && bytes[i] <= b'9' {
+            let digit = bytes[i] - b'0';
+            match field {
+                0 => a = a * 10 + digit,
+                1 => b = b * 10 + digit,
+                2 => c = c * 10 + digit,
+                _ => {}
+            }
+        } else if bytes[i] == b',' {
+            field += 1;
+        }
+        i += 1;
+    }
+
+    // TODO: make SerialCode::new const fn and return SerialCode directly
+    (a, b, c)
+}
 
 pub struct Hopper;
 
@@ -34,20 +67,21 @@ impl DeviceImpl for Hopper {
         ChecksumType::Crc8
     }
 
-    fn product_code(&self) -> &str {
+    fn product_code(&self) -> &'static str {
         "Universal Hopper Adapter"
     }
 
     fn serial_number(&self) -> SerialCode {
-        SerialCode::new(0, 215, 0)
+        let (a, b, c) = parse_serial_code();
+        SerialCode::new(a, b, c)
     }
 
-    fn software_revision(&self) -> &str {
-        "V1.0.0"
+    fn software_revision(&self) -> &'static str {
+        build_info::PKG_VERSION
     }
 
-    fn build_code(&self) -> &str {
-        "V1.0.0"
+    fn build_code(&self) -> &'static str {
+        build_info::PKG_VERSION
     }
 
     fn data_storage_availability(&self) -> DataStorage {
@@ -67,10 +101,7 @@ impl DeviceImpl for Hopper {
     }
 
     fn address(&self) -> u8 {
-        match BUS_ADDRESS.try_lock() {
-            Ok(addr) => *addr,
-            Err(_) => 3,
-        }
+        BUS_ADDRESS.try_lock().map_or(3, |addr| *addr)
     }
 
     fn device(&self) -> Device {
@@ -87,7 +118,7 @@ impl SimplePayoutDevice for Hopper {
         send_reset_signal(ResetType::Hopper);
     }
 
-    fn request_hopper_coin(&self) -> &str {
+    fn request_hopper_coin(&self) -> &'static str {
         "" // The universal hopper mk2 can hold many type of coins.
     }
 

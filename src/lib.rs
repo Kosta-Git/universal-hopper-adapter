@@ -11,6 +11,7 @@ fn panic() -> ! {
     cortex_m::asm::udf();
 }
 
+pub mod build_info;
 pub mod hopper;
 pub mod payout;
 pub mod reset;

@@ -56,8 +56,7 @@ async fn main(spawner: Spawner) {
         low_level_sensor,
         high_level_sensor,
         security_output,
-    )
-    .await;
+    );
 
     let uart_config = {
         let mut conf = UartConfig::default();
